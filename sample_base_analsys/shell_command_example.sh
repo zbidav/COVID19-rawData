@@ -70,7 +70,7 @@ mkdir -p $OUT_DIR
 nohup RNAEditingIndex1.1 -d $IN_DIR -o $OUT_DIR -l $OUT_DIR -os $OUT_DIR --genome hg38 --paired_end --keep_cmpileup > ${OUT_DIR}/runAluIndex_Log.txt &
 
 ## we applied the tool using basal human paramaeters on 3'UTR Alu elements
-# the regioun obtained based on Cohen-Fultheim,R analsis. We defined Alu elements that have an opposite orientation Alu aside, with minimal length of 200. 
+### We defined Alu elements that have an opposite orientation Alu aside, with minimal length of 200. 
 IN_DIR="STAR/"
 OUT_DIR="RNAEditingIndex/Alu3pUTR/"
 REGIOUNS="hg38.Alu3pUTR_minLen200_17022021.RepeatsInOppositeOrientationAtRegions.sorted.merged.bed";
