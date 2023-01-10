@@ -1,0 +1,1573 @@
+---
+title: "Other COVID datasets"
+author: "David Gorelik"
+date: "13/11/2021"
+output: html_document
+# output:
+#   prettydoc::html_pretty:
+#     theme: cayman
+#     toc: true
+#     toc_depth: 3
+#     number_sections: true
+#     highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(reshape2)
+  library(dplyr)
+  library(data.table)
+library(cowplot)
+library(reshape2)
+library(purrr)
+
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(ggsignif)
+
+library(knitr)
+library(kableExtra) #for good designening of table
+library(magrittr)
+```
+# Results {.tabset .tabset-pills}
+
+## Setup {.tabset .tabset-pills}
+
+### functions {.tabset .tabset-pills}
+
+Mean function for ggplot2 plots
+```{r functions}
+meanFunction <- function(x){
+  return(data.frame(y=round(mean(x),2),label=round(mean(x,na.rm=T),2)))}
+
+```
+
+themes to use with ggplot2
+```{r}
+themes_ggplot <- theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  font("xlab", size = 12, color = "black", face = "bold") +
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("title", size = 14, color = "black", face = "bold")+
+  font("legendtitle", size = 12, color = "black", face = "bold")+
+  font("legendtext", size = 12, color = "black")+
+  font("xy.text", size = 12, color = "black")+
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("xlab", size = 12, color = "black", face = "bold") +
+  theme(strip.text.x = element_text( size = 12, color = "black", face = "bold"))+
+  theme(strip.text.y = element_text( size = 12, color = "black", face = "bold"))+
+  theme(legend.position='top')
+
+chosen_colors = c("#9ecae1", "#a63603", "#e6550d", "#fd8d3c", "#fdbe85", "#feedde") 
+```
+
+
+
+### general parameters {.tabset .tabset-pills}
+
+```{r}
+OUT_DIR <- "results/small_datasets/"
+sra_table_path <- "raw/small_datasets/unitedCoronaSRATable.csv"
+dir.create(OUT_DIR)
+# dbgap_data_path <- "/private9/Projects/COVID_NASAL_DBGAP_TEMPORARY/temp_krt_dbgap/combined_sample_subject_attribute.csv"
+
+# dbgap_table <- read.csv(file= dbgap_data_path, stringsAsFactors=FALSE)
+sra_table <- read.csv(file= sra_table_path, stringsAsFactors=FALSE, sep=",")
+
+sra_table$Group[sra_table$Project == "Nasal Swabs (GSE166530)" & sra_table$Group == "Controls"] <- "temp"
+sra_table$Group[sra_table$Project == "Nasal Swabs (GSE166530)" & sra_table$Group == "COVID"] <- "Controls"
+sra_table$Group[sra_table$Project == "Nasal Swabs (GSE166530)" & sra_table$Group == "temp"] <- "COVID"
+sra_table$Group[sra_table$Project == "Nasal Swabs (GSE166530)" & sra_table$Group == "COVID"] <- "Controls"
+sra_table$Group[sra_table$Group == "Controls"] <- "Control"
+
+sra_table$Project <- factor(sra_table$Project,levels = c('Nasal Swabs (GSE166530)','Whole Blood (GSE167000)',
+                                                     'Whole Blood (GSE171110)','Leukocytes (GSE157103)'))
+
+kable(head(sra_table)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+## Analysis tables {.tabset .tabset-pills}
+
+### SALMON {.tabset .tabset-pills}
+
+```{r}
+ADARexp = c("raw/small_datasets/Covid19_GSE157103_SalmonTPM_ADAR.wideSamples.csv",
+            "raw/small_datasets/WholeBlood_GSE171110_SalmonTPM_ADAR.wideSamples.csv",
+            "raw/small_datasets/Blood_GSE167000_SalmonTPM_ADAR.wideSamples.csv",
+            "raw/small_datasets/nasal_swabs_GSE166530_ADAR.wideSamples.csv")
+
+#read all files to one table
+
+df_salmon = ADARexp %>%
+  map_dfr(compose(function (f) dcast(f, Sample~GeneSymbol),
+                  function (f) melt(f, variable.name = "Sample", id.var = "GeneSymbol", value.name = "TPM"),
+                  function (f) fread(f, header=T, check.names = F, stringsAsFactors=FALSE))) %>%
+  filter(!grepl(pattern = "_counts", x = Sample)) %>%
+  mutate(Sample = gsub("_TPM", replacement = "", x = Sample)) 
+ 
+
+kable(head(df_salmon)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### ISG {.tabset .tabset-pills}
+
+```{r}
+ISG_path <- c("raw/small_datasets/Covid19_GSE157103_ArticleCalcLog2_ISG_madz_scores.csv",
+        "raw/small_datasets/WholeBlood_GSE171110_ArticleCalcLog2_ISG_madz_scores.csv",
+        "raw/small_datasets/Blood_GSE167000_ArticleCalcLog2_ISG_madz_scores.csv",
+        "raw/small_datasets/Covid_nasal_swabs_GSE166530_ArticleCalcLog2_ISG_madz_scores.csv")
+
+df_isg = ISG_path %>% 
+  map_dfr(fread, header = T, stringsAsFactors = F)  %>%
+filter(!grepl(pattern = "_counts", x = Sample)) %>%
+  mutate(Sample = gsub("_TPM", replacement = "", x = Sample)) 
+
+kable(head(df_isg)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+
+### STAR {.tabset .tabset-pills}
+
+```{r}
+STAR = c("raw/small_datasets/Covid19_GSE157103_STAR_stats.csv",
+        "raw/small_datasets/WholeBlood_GSE171110_STAR_stats.csv",
+        "raw/small_datasets/Blood_GSE167000_STAR_stats.csv",
+        "raw/small_datasets/Covid_nasal_swabs_GSE166530_STAR_stats.csv")
+
+STAR_stats = STAR %>% 
+  map_dfr(fread, header = T, stringsAsFactors = F) 
+
+kable(head(STAR_stats)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### Alu-index {.tabset .tabset-pills}
+
+```{r}
+
+aluIndex_path = c("raw/small_datasets/Covid19_GSE157103_EditingIndex.csv",
+             "raw/small_datasets/WholeBlood_GSE171110_EditingIndex.csv",
+             "raw/small_datasets/Blood_GSE167000_EditingIndex.csv",
+             "raw/small_datasets/Covid_nasal_swabs_GSE166530_EditingIndex.csv")
+
+#read all files to one table
+aluIndex = aluIndex_path %>% 
+  map_dfr(fread, header = T, stringsAsFactors = F) %>% 
+  dplyr::select("Sample","A2GEditingIndex","A2TEditingIndex","C2AEditingIndex",
+                "C2TEditingIndex", "C2GEditingIndex","A2CEditingIndex")
+
+#change the column names
+names(aluIndex) <- gsub("EditingIndex","EditingIndex_Alu",
+                        names(aluIndex))
+
+kable(head(aluIndex)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+
+```
+
+### combine the plots {.tabset .tabset-pills}
+
+```{r}
+#combine all tables to one table
+df_combined <- left_join(sra_table, df_salmon ,by=c("Run"="Sample")) %>%
+  left_join(df_isg ,by=c("Run"="Sample")) %>%
+  left_join(aluIndex,by=c("Run"="Sample")) %>%
+  left_join(STAR_stats,by=c("Run"="Sample"))
+
+out_path <- paste0(OUT_DIR,"/combinedResults_all.csv")
+write.csv(df_combined, out_path, row.names = F, quote = F)
+
+kable(head(df_combined)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### General statistics {.tabset .tabset-pills}
+
+```{r}
+df_combined_Stats <- df_combined %>% 
+  group_by(Project,Group) %>% #nrow()
+  summarize(ADAR = paste(round(mean(ADAR, na.rm=T),2), "(",round(min(ADAR,na.rm=T),2),", ", 
+                         round(max(ADAR,na.rm=T),2),", ",round(median(ADAR,na.rm=T),2),", +-",
+                         round(sd(ADAR,na.rm=T),2),")"),
+            ADARB1 = paste(round(mean(ADARB1,na.rm=T),2), "(",round(min(ADARB1,na.rm=T),2),", ", 
+                           round(max(ADARB1,na.rm=T),2),", ",round(median(ADARB1,na.rm=T),2),", +-",
+                           round(sd(ADARB1,na.rm=T),2),")"),
+            ADARB2 = paste(round(mean(ADARB2,na.rm=T),2), "(",round(min(ADARB2,na.rm=T),2),", ", 
+                           round(max(ADARB2,na.rm=T),2),", ",round(median(ADARB2,na.rm=T),2),", +-",
+                           round(sd(ADARB2,na.rm=T),2),")"),
+            ADARB2.AS1 = paste(round(mean(`ADARB2-AS1`,na.rm=T),2), "(",round(min(`ADARB2-AS1`,na.rm=T),2),", ", 
+                               round(max(`ADARB2-AS1`,na.rm=T),2),", ",round(median(`ADARB2-AS1`,na.rm=T),2),", +-",
+                               round(sd(`ADARB2-AS1`,na.rm=T),2),")"),
+            ISG38_score = paste(round(mean(ISG38_score,na.rm=T),2), "(",round(min(ISG38_score,na.rm=T),2),", ", 
+                                round(max(ISG38_score,na.rm=T),2),", ",round(median(ISG38_score,na.rm=T),2), ", +-",
+                                round(sd(ISG38_score,na.rm=T),2),")"),
+           A2GEditingIndex_Alu = paste(round(mean(A2GEditingIndex_Alu,na.rm=T),2), "(",
+                                       round(min(A2GEditingIndex_Alu,na.rm=T),2),", ", 
+                                    round(max(A2GEditingIndex_Alu, na.rm=T),2),", ",
+                                    round(median(A2GEditingIndex_Alu, na.rm=T),2), ", +-", 
+                                    round(sd(A2GEditingIndex_Alu, na.rm=T),2),")")
+            ) 
+write.csv(df_combined_Stats, paste0(OUT_DIR,"/combinedResults_mean_min_max_median_sd.csv"), 
+          row.names = F, quote = F)
+
+kable(df_combined_Stats) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+## Plots {.tabset .tabset-pills}
+
+### Alu-Index {.tabset .tabset-pills}
+
+#### A-G clean signal {.tabset .tabset-pills}
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+ edit_type_names <- c("A2GEditingIndex_Alu" = "A-G\n(T-C)", "A2TEditingIndex_Alu" = "A-T\n(T-A)", 
+                      "C2AEditingIndex_Alu" = "C-A\n(G-T)", "C2TEditingIndex_Alu" = "C-T\n(G-A)", 
+                      "C2GEditingIndex_Alu" = "C-G\n(G-C)",  "A2CEditingIndex_Alu" = "A-C\n(T-G)")
+
+```
+
+```{r}
+plot_GSE157103.Mismatches <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  dplyr::select("Run", "Project", 
+                "A2GEditingIndex_Alu","A2TEditingIndex_Alu",
+         "C2AEditingIndex_Alu","C2TEditingIndex_Alu",
+         "C2GEditingIndex_Alu","A2CEditingIndex_Alu") %>%
+  gather(edit_type, value, -Run, -Project) %>%
+  ggplot(aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  facet_grid(~Project)+
+  # theme(axis.text.x = element_text(angle = 90))+
+  ylab("ALU Editing Index")+ xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+plot_GSE157103.Mismatches
+
+```
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+plot_GSE166530.Mismatches <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  dplyr::select("Run", "Project", 
+                "A2GEditingIndex_Alu","A2TEditingIndex_Alu",
+         "C2AEditingIndex_Alu","C2TEditingIndex_Alu",
+         "C2GEditingIndex_Alu","A2CEditingIndex_Alu") %>%
+  gather(edit_type, value, -Run, -Project) %>%
+  ggplot(aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  facet_grid(~Project)+
+  # theme(axis.text.x = element_text(angle = 90))+
+  ylab("ALU Editing Index")+ xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+plot_GSE166530.Mismatches
+
+```
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+plot_GSE167000.Mismatches <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  dplyr::select("Run", "Project", 
+                "A2GEditingIndex_Alu","A2TEditingIndex_Alu",
+         "C2AEditingIndex_Alu","C2TEditingIndex_Alu",
+         "C2GEditingIndex_Alu","A2CEditingIndex_Alu") %>%
+  gather(edit_type, value, -Run, -Project) %>%
+  ggplot(aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  facet_grid(~Project)+
+  # theme(axis.text.x = element_text(angle = 90))+
+  ylab("ALU Editing Index")+ xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+plot_GSE167000.Mismatches
+
+```
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+plot_GSE171110.Mismatches <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  dplyr::select("Run", "Project", 
+                "A2GEditingIndex_Alu","A2TEditingIndex_Alu",
+         "C2AEditingIndex_Alu","C2TEditingIndex_Alu",
+         "C2GEditingIndex_Alu","A2CEditingIndex_Alu") %>%
+  gather(edit_type, value, -Run, -Project) %>%
+  ggplot(aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  facet_grid(~Project)+
+  # theme(axis.text.x = element_text(angle = 90))+
+  ylab("ALU Editing Index")+ xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+plot_GSE171110.Mismatches
+
+```
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+ plot_grid(plot_GSE166530.Mismatches, 
+          plot_GSE167000.Mismatches,
+          plot_GSE171110.Mismatches,
+          plot_GSE157103.Mismatches,
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"AluIndex_all_cleanSignal.pdf")
+ggsave(out_path, width = 18, height = 6)         
+          
+```
+
+
+#### Alu-Index {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Leukocytes (GSE157103)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE157103 <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE157103
+```
+
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110
+```
+
+```{r}
+plot_grid(plot_GSE166530, plot_GSE167000, plot_GSE171110, plot_GSE157103,
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"AluEditing_all_combined.pdf")
+ggsave(out_path, width = 14, height = 6)
+```
+
+
+### SALMON {.tabset .tabset-pills}
+
+#### Leukocytes (GSE157103) {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Leukocytes (GSE157103)") %>% .$ADAR)
+
+c <- df_combined %>% 
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  compare_means(ADAR ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE157103.ADAR <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  ggplot(
+               aes(y=ADAR, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE157103.ADAR
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Leukocytes (GSE157103)") %>% .$ADARB1)
+
+c <- df_combined %>% 
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  compare_means(ADARB1 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE157103.ADARB1 <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  ggplot(
+               aes(y=ADARB1, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE157103.ADARB1
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Leukocytes (GSE157103)") %>% .$ADARB2)
+
+c <- df_combined %>% 
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  compare_means(ADARB2 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE157103.ADARB2 <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  ggplot(
+               aes(y=ADARB2, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE157103.ADARB2
+```
+
+```{r}
+plot_grid(plot_GSE157103.ADAR+facet_grid(~"ADAR"), 
+          plot_GSE157103.ADARB1+facet_grid(~"ADAR2"), 
+          plot_GSE157103.ADARB2+facet_grid(~"ADAR3"),
+          labels = c('', '',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"SALMON_Leukocytes_GSE157103.pdf")
+ggsave(out_path, width = 14, height = 6)
+
+```
+
+
+
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110
+```
+
+```{r}
+plot_grid(plot_GSE166530, plot_GSE167000, plot_GSE171110, plot_GSE157103,
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"AluEditing_all_combined.pdf")
+ggsave(out_path, width = 14, height = 6)
+```
+
+
+
+
+
+#### Nasal Swab (GSE157103) {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$ADAR)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(ADAR ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530.ADAR <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=ADAR, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530.ADAR
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$ADARB1)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(ADARB1 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530.ADARB1 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=ADARB1, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530.ADARB1
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$ADARB2)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(ADARB2 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530.ADARB2 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=ADARB2, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530.ADARB2
+```
+
+```{r}
+plot_grid(plot_GSE166530.ADAR+facet_grid(~"ADAR"), 
+          plot_GSE166530.ADARB1+facet_grid(~"ADAR2"), 
+          plot_GSE166530.ADARB2+facet_grid(~"ADAR3"),
+          labels = c('', '',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"SALMON_Nasal Swabs_GSE166530.pdf")
+ggsave(out_path, width = 14, height = 6)
+
+```
+
+#### Whole Blood (GSE167000) {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$ADAR, na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(ADAR ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000.ADAR <-
+  df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=ADAR, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000.ADAR
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$ADARB1, na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(ADARB1 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000.ADARB1 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=ADARB1, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000.ADARB1
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$ADARB2,na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(ADARB2 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000.ADARB2 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=ADARB2, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000.ADARB2
+```
+
+```{r}
+plot_grid(plot_GSE167000.ADAR+facet_grid(~"ADAR"), 
+          plot_GSE167000.ADARB1+facet_grid(~"ADAR2"), 
+          plot_GSE167000.ADARB2+facet_grid(~"ADAR3"),
+          labels = c('', '',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"SALMON_WholeBlood_GSE167000.pdf")
+ggsave(out_path, width = 14, height = 6)
+
+```
+
+
+
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$A2GEditingIndex_Alu)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(A2GEditingIndex_Alu ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=A2GEditingIndex_Alu, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110
+```
+
+```{r}
+plot_grid(plot_GSE166530, plot_GSE167000, plot_GSE171110, plot_GSE157103,
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"AluEditing_all_combined.pdf")
+ggsave(out_path, width = 14, height = 6)
+```
+
+
+
+
+
+
+
+Nasal Swabs (GSE166530)
+
+#### Whole Blood (GSE167000) {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$ADAR, na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(ADAR ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110.ADAR <-
+  df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=ADAR, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110.ADAR
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$ADARB1, na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(ADARB1 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110.ADARB1 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=ADARB1, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110.ADARB1
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$ADARB2,na.rm=T)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(ADARB2 ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110.ADARB2 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=ADARB2, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid( ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110.ADARB2
+```
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+plot_grid(plot_GSE171110.ADAR+facet_grid(~"ADAR"), 
+          plot_GSE171110.ADARB1+facet_grid(~"ADAR2"), 
+          plot_GSE171110.ADARB2+facet_grid(~"ADAR3"),
+          labels = c('', '',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"SALMON_WholeBlood_GSE171110.pdf")
+ggsave(out_path, width = 14, height = 6)
+
+```
+
+#### All datasets {.tabset .tabset-pills}
+
+```{r}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+
+ plot_grid(plot_GSE166530.ADAR+facet_grid(~"Nasal Swabs (GSE166530)"), 
+          plot_GSE167000.ADAR+facet_grid(~"Whole Blood (GSE167000)"),
+          plot_GSE171110.ADAR+facet_grid(~"Whole Blood (GSE171110)"),
+          plot_GSE157103.ADAR+facet_grid(~"Leukocytes (GSE157103)"),
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"SALMON_All_adar1.pdf")
+ggsave(out_path, width = 16, height = 6)         
+          
+```
+
+
+
+
+
+### ISG {.tabset .tabset-pills}
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Leukocytes (GSE157103)") %>% .$ISG38_score)
+
+c <- df_combined %>% 
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  compare_means(ISG38_score ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE157103 <-
+  df_combined %>%
+  filter(Project =="Leukocytes (GSE157103)") %>%
+  ggplot(
+               aes(y=ISG38_score, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Interferon signalling genes")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE157103
+```
+
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>% .$ISG38_score)
+
+c <- df_combined %>% 
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  compare_means(ISG38_score ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE166530 <-
+  df_combined %>%
+  filter(Project =="Nasal Swabs (GSE166530)") %>%
+  ggplot(
+               aes(y=ISG38_score, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Interferon signalling genes")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE166530
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE167000)") %>% .$ISG38_score)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  compare_means(ISG38_score ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE167000 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE167000)") %>%
+  ggplot(
+               aes(y=ISG38_score, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Interferon signalling genes")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE167000
+```
+
+```{r echo=TRUE}
+#Leukocytes (GSE157103)  Nasal Swabs (GSE166530) Whole Blood (GSE167000) Whole Blood (GSE171110)
+y_position = max(df_combined%>% 
+  filter(Project =="Whole Blood (GSE171110)") %>% .$ISG38_score)
+
+c <- df_combined %>% 
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  compare_means(ISG38_score ~Group, data = .)
+c %<>% mutate(y_pos = c(y_position *1), 
+              labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0("* (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.01] <- paste0("** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 0.001] <- paste0("*** (p=", c$p.adj,")")
+c$p.adj.format.stars[c$p.adj < 2e-16] <- paste0("**** (p=", c$p.adj,")")
+
+df_c <- as.data.frame(c)
+
+plot_GSE171110 <-
+  df_combined %>%
+  filter(Project =="Whole Blood (GSE171110)") %>%
+  ggplot(
+               aes(y=ISG38_score, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ Project ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Interferon signalling genes")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue","red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+plot_GSE171110
+```
+
+```{r}
+plot_grid(plot_GSE166530, plot_GSE167000, plot_GSE171110, plot_GSE157103,
+          labels = c('', '','',''), label_size = 12, ncol=4)
+out_path <- paste0(OUT_DIR,'/',"ISG_all_combined.pdf")
+ggsave(out_path, width = 14, height = 6)
+```
+
+
+
+
+
+
+
+### correlation {.tabset .tabset-pills}
+
+```{r}
+corr_alu_ADAR <- df_combined %>% 
+  ggplot(aes(y=A2GEditingIndex_Alu, x=ADAR))+ facet_wrap(~Project)+
+  geom_point(aes(color=Group),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=c("blue","red"), name = "Group:") +
+  ylab("ALU Editing Index")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_alu_ADAR
+
+out_path <- paste0(OUT_DIR,'/',"corr_Alu_ADAR.pdf")
+ggsave(out_path, corr_alu_ADAR, width = 10, height = 6)
+```
+
+
+```{r}
+corr_ISG_ADAR <- df_combined %>% 
+ggplot(aes(y=ISG38_score, x=ADAR))+
+  geom_point(aes(color=Group),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+
+  facet_wrap(~Project)+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=c("blue","red"), name = "Group:") +
+  ylab("Interferon-Stimulated Genes Score")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_ISG_ADAR
+
+out_path <- paste0(OUT_DIR,'/',"corr_ISG_ADAR.pdf")
+ggsave(out_path, corr_ISG_ADAR, width = 10, height = 6)
+```
+
+```{r}
+corr_ISG_Alu <- df_combined %>% 
+ggplot(aes(x=A2GEditingIndex_Alu, y=ISG38_score))+
+  geom_point(aes(color=Group),size=3, alpha = 0.4) + 
+  themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+ facet_wrap(~Project)+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=c("blue","red"), name = "Group:") +
+  xlab("Interferon-Stimulated Genes Score")+ ylab (" ALU Editing Index")
+
+corr_ISG_Alu
+
+out_path <- paste0(OUT_DIR,'/',"corr_corr_ISG_Alu.pdf")
+ggsave(out_path, corr_ISG_ADAR, width = 10, height = 6)
+
+```
+
+
+
+

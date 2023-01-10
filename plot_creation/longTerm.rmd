@@ -1,0 +1,756 @@
+---
+title: "Long COVID analysis"
+author: "David Gorelik"
+date: "13/11/2021"
+output: html_document
+# output:
+#   prettydoc::html_pretty:
+#     theme: cayman
+#     toc: true
+#     toc_depth: 3
+#     number_sections: true
+#     highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(reshape2)
+  library(dplyr)
+  library(data.table)
+library(cowplot)
+
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(ggsignif)
+
+library(knitr)
+library(kableExtra) #for good designening of table
+library(magrittr)
+```
+# Results {.tabset .tabset-pills}
+
+## Setup {.tabset .tabset-pills}
+
+### functions {.tabset .tabset-pills}
+Mean function for ggplot2 plots
+```{r functions}
+meanFunction <- function(x){
+  return(data.frame(y=round(mean(x),2),label=round(mean(x,na.rm=T),2)))}
+
+```
+
+themes to use with ggplot2
+```{r}
+themes_ggplot <- theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  font("xlab", size = 12, color = "black", face = "bold") +
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("title", size = 14, color = "black", face = "bold")+
+  font("legendtitle", size = 12, color = "black", face = "bold")+
+  font("legendtext", size = 12, color = "black")+
+  font("xy.text", size = 12, color = "black")+
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("xlab", size = 12, color = "black", face = "bold") +
+  theme(strip.text.x = element_text( size = 12, color = "black", face = "bold"))+
+  theme(strip.text.y = element_text( size = 12, color = "black", face = "bold"))+
+  theme(legend.position='top')
+
+chosen_colors = c("#9ecae1", "#a63603", "#e6550d", "#fd8d3c", "#fdbe85", "#feedde") 
+```
+
+### general parameters {.tabset .tabset-pills}
+
+```{r}
+OUT_DIR <- "results/Covid_longTerm_GSE166190/"
+sra_table_path <-"raw/Covid_longTerm_GSE166190/sra_table.tsv"
+dir.create(OUT_DIR)
+
+sra_table <- read.csv(file= sra_table_path, stringsAsFactors=FALSE, sep="\t")
+
+
+kable(head(sra_table)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+```{r}
+sra_table$time_point
+sra_table$time_point_arrenged <- sra_table$time_point
+sra_table$time_point_arrenged[grep("Negative",sra_table$time_point_arrenged)] <- "Control"
+sra_table$time_point_arrenged <- gsub("POS interval ", "Period:",sra_table$time_point_arrenged)
+
+sra_table$disease <- sra_table$sars.cov.2_infection
+sra_table$disease <- gsub("Negative", "Control",sra_table$disease)
+sra_table$disease <- gsub("Positive", "COVID-19",sra_table$disease)
+
+sra_table$Group = factor(sra_table$time_point_arrenged,ordered=T)
+
+# for stats
+sra_table$Classification <- gsub(pattern = " ", replacement = "_", x = paste0(sra_table$Project, "_", sra_table$Group))
+sra_table$Project = "Frontal Cortex (GSE166530)"
+combs = list(c("Control", "Period:1"),
+             c("Period:1", "Period:5"),
+             c("Control", "Period:5")
+)
+
+sra_table$Age_group <- factor(sra_table$Age_group,levels = c('Adult',"Child"))
+
+
+df_sra_table_noControls <- sra_table[c(sra_table$time_point_arrenged == "Control" & 
+                                           sra_table$time_point == "Negative visit 1") | 
+                                        c(sra_table$time_point_arrenged != "Control"), ]
+
+# allData$Group_spaced <-gsub(' ', '\n',allData$Group)
+```
+
+## Analysis tables {.tabset .tabset-pills}
+
+### SALMON {.tabset .tabset-pills}
+
+```{r}
+salmon_path <- "raw/Covid_longTerm_GSE166190/SalmonTPM_ADAR.wideGenes.csv"
+df_salmon <-  read.csv(file=salmon_path,header=T, stringsAsFactors=FALSE)
+
+# length(df_salmon$Sample) == length(unique(df_salmon$Sample))
+
+df_ISG <- read.csv("raw/Covid_longTerm_GSE166190/ArticleCalcLog2_ISG_madz_scores.csv")
+df_salmon <- left_join(df_salmon, df_ISG, by="Sample")
+
+kable(head(df_salmon)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### STAR {.tabset .tabset-pills}
+
+```{r}
+  STAR_stats <- read.csv("raw/Covid_longTerm_GSE166190/STAR_stats.csv",
+                       check.names = F)
+
+
+# length(STAR_stats$Sample)
+# length(unique(STAR_stats$Sample))
+#remove duplicated lines and samples that did not map at all.
+STAR_stats_removedDup <- unique(STAR_stats)
+
+kable(head(STAR_stats_removedDup)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+
+### Alu-index {.tabset .tabset-pills}
+
+```{r}
+aluIndex_table_path <-"raw/Covid_longTerm_GSE166190/EditingIndex.csv"
+alu_table_index = read.csv(file=aluIndex_table_path,header=T, stringsAsFactors=FALSE)
+
+alu_table_index$Sample <- gsub(".", "", alu_table_index$Sample,fixed = TRUE) #fix sample name if needed.
+names(alu_table_index)[names(alu_table_index) == "Sample"] <- "Run" 
+#select requird columns
+alu_table_index_combined <- dplyr::select(alu_table_index,"Run",
+                                    "A2GEditingIndex","A2TEditingIndex",
+                                    "C2AEditingIndex","C2TEditingIndex",
+                                    "C2GEditingIndex","A2CEditingIndex")
+
+# filter the samples from failed samples and duplicated samples.
+alu_table_index_combined <- unique(alu_table_index_combined)
+alu_table_index_above0 <- alu_table_index_combined[!
+                  c(alu_table_index_combined$A2GEditingIndex == 0 & 
+                      alu_table_index_combined$A2TEditingIndex == 0 &
+                      alu_table_index_combined$C2AEditingIndex == 0 & 
+                      alu_table_index_combined$C2TEditingIndex == 0 &
+                      alu_table_index_combined$C2GEditingIndex == 0 & 
+                      alu_table_index_combined$A2CEditingIndex ==0),]
+alu_table_index_combined <- alu_table_index_above0
+
+#change the column names
+names(alu_table_index_combined) <- gsub("EditingIndex","EditingIndex_Alu",
+                                            names(alu_table_index_combined))
+
+kable(head(alu_table_index_combined)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### 3UTR Alu-index {.tabset .tabset-pills}
+
+```{r}
+alu3UTR_table_path <- "raw/Covid_longTerm_GSE166190/EditingIndex.csv"
+alu3UTR_table_index = read.csv(file=alu3UTR_table_path,header=T, stringsAsFactors=FALSE)
+alu3UTR_table_index$Sample <- gsub(".", "", alu3UTR_table_index$Sample,fixed = TRUE) #fix sample name if needed.
+
+names(alu3UTR_table_index)[names(alu3UTR_table_index) == "Sample"] <- "Run" 
+alu3UTR_table_index_combined <- dplyr::select(alu3UTR_table_index,"Run",#vector_sra_colmns,
+                                    "A2GEditingIndex","A2TEditingIndex",
+                                    "C2AEditingIndex","C2TEditingIndex",
+                                    "C2GEditingIndex","A2CEditingIndex")
+
+# filter the samples from failed samples and duplicated samples.
+alu3UTR_table_index_combined <- unique(alu3UTR_table_index_combined)
+alu3UTR_table_index_combined <- alu3UTR_table_index_combined[!
+                  c(alu3UTR_table_index_combined$A2GEditingIndex == 0 & 
+                      alu3UTR_table_index_combined$A2TEditingIndex == 0 &
+                      alu3UTR_table_index_combined$C2AEditingIndex == 0 & 
+                      alu3UTR_table_index_combined$C2TEditingIndex == 0 &
+                      alu3UTR_table_index_combined$C2GEditingIndex == 0 & 
+                      alu3UTR_table_index_combined$A2CEditingIndex ==0),]
+
+
+#change the column names
+names(alu3UTR_table_index_combined) <- gsub("EditingIndex","EditingIndex_3UTR",
+                                            names(alu3UTR_table_index_combined))
+
+kable(head(alu3UTR_table_index_combined)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+```
+
+### combine the plots {.tabset .tabset-pills}
+
+```{r}
+#combine all tables to one table
+df_combined <- left_join(alu_table_index_combined,sra_table ,by="Run")
+df_combined <- left_join(df_combined,alu3UTR_table_index_combined ,by="Run")
+df_combined <- left_join(df_combined,df_salmon,by=c("Run"="Sample"))
+df_combined <- left_join(df_combined,STAR_stats_removedDup,by=c("Run"="Sample"))
+
+out_path <- paste0(OUT_DIR,"/combinedResults_all.csv")
+write.csv(df_combined, out_path, row.names = F, quote = F)
+
+# df_combined <- left_join(alu_table_index_combined,sra_table ,by="Run")
+df_combined_noControls <- left_join(alu_table_index_combined,df_sra_table_noControls ,by="Run")
+df_combined_noControls <- left_join(df_combined,alu3UTR_table_index_combined ,by="Run")
+df_combined_noControls <- left_join(df_combined,df_salmon,by=c("Run"="Sample"))
+df_combined_noControls <- left_join(df_combined,STAR_stats_removedDup,by=c("Run"="Sample"))
+
+#verify that there no duplicated samples
+length(unique(df_combined_noControls$Run)) == length(df_combined$Run)
+
+out_path <-paste0(OUT_DIR,"/combinedTable_onlyMainResults.csv")
+write.csv(df_combined_noControls, out_path, row.names = F, quote = F)
+
+```
+### General statistics {.tabset .tabset-pills}
+
+```{r}
+df_combined_Stats <- df_combined_noControls %>% 
+  group_by(time_point_arrenged) %>% #nrow()
+  summarize(ADAR = paste(round(mean(ADAR),2), "(",round(min(ADAR),2),", ", 
+                         round(max(ADAR),2),", ",round(median(ADAR),2),", +-",
+                         round(sd(ADAR),2),")"),
+            ADARB1 = paste(round(mean(ADARB1),2), "(",round(min(ADARB1),2),", ", 
+                           round(max(ADARB1),2),", ",round(median(ADARB1),2),", +-",
+                           round(sd(ADARB1),2),")"),
+            ADARB2 = paste(round(mean(ADARB2),2), "(",round(min(ADARB2),2),", ", 
+                           round(max(ADARB2),2),", ",round(median(ADARB2),2),", +-",
+                           round(sd(ADARB2),2),")"),
+            ADARB2.AS1 = paste(round(mean(ADARB2.AS1),2), "(",round(min(ADARB2.AS1),2),", ", 
+                               round(max(ADARB2.AS1),2),", ",round(median(ADARB2.AS1),2),", +-",
+                               round(sd(ADARB2.AS1),2),")"),
+            ISG38_score = paste(round(mean(ISG38_score),2), "(",round(min(ISG38_score),2),", ", 
+                                round(max(ISG38_score),2),", ",round(median(ISG38_score),2), ", +-",
+                                round(sd(ISG38_score),2),")"),
+           A2GEditingIndex_Alu = paste(round(mean(A2GEditingIndex_Alu),2), "(",
+                                       round(min(A2GEditingIndex_Alu),2),", ", 
+                                    round(max(A2GEditingIndex_Alu),2),", ",
+                                    round(median(A2GEditingIndex_Alu),2), ", +-", 
+                                    round(sd(A2GEditingIndex_Alu),2),")"),
+            A2GEditingIndex_3UTR = paste(round(mean(A2GEditingIndex_3UTR),2), "(",
+                                         round(min(A2GEditingIndex_3UTR),2),", ", 
+                                      round(max(A2GEditingIndex_3UTR),2),", ",
+                                      round(median(A2GEditingIndex_3UTR),2),", +-", 
+                                      round(sd(A2GEditingIndex_3UTR),2),")")
+            ) 
+write.csv(df_combined_Stats, paste0(OUT_DIR,"/combinedResults_mean_min_max_median_sd.csv"), 
+          row.names = F, quote = F)
+
+```
+
+
+
+```{r}
+df_combined_noControls %>% 
+  group_by(time_point_arrenged) %>% 
+  summarize(ADAR = paste(round(mean(ADAR),2), "(",round(min(ADAR),2),", ", 
+                         round(max(ADAR),2),", ",round(median(ADAR),2),")"),
+            ADARB1 = paste(round(mean(ADARB1),2), "(",round(min(ADARB1),2),", ", 
+                           round(max(ADARB1),2),", ",round(median(ADARB1),2),")"),
+            ADARB2 = paste(round(mean(ADARB2),2), "(",round(min(ADARB2),2),", ", 
+                           round(max(ADARB2),2),", ",round(median(ADARB2),2),")"),
+            ADARB2.AS1 = paste(round(mean(ADARB2.AS1),2), "(",round(min(ADARB2.AS1),2),", ", 
+                               round(max(ADARB2.AS1),2),", ",round(median(ADARB2.AS1),2),")"),
+            ISG38_score = paste(round(mean(ISG38_score),2), "(",round(min(ISG38_score),2),", ", 
+                                round(max(ISG38_score),2),", ",round(median(ISG38_score),2),")"),
+           A2GEditingIndex_Alu = paste(round(mean(A2GEditingIndex_Alu),2), "(",
+                                       round(min(A2GEditingIndex_Alu),2),", ", 
+                                    round(max(A2GEditingIndex_Alu),2),", ",
+                                    round(median(A2GEditingIndex_Alu),2),")"),
+            A2GEditingIndex_3UTR = paste(round(mean(A2GEditingIndex_3UTR),2), "(",
+                                         round(min(A2GEditingIndex_3UTR),2),", ", 
+                                      round(max(A2GEditingIndex_3UTR),2),", ",
+                                      round(median(A2GEditingIndex_3UTR),2),")")
+            )%>% kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+
+```
+
+
+## Plots {.tabset .tabset-pills}
+
+
+
+
+### AluIndex over time {.tabset .tabset-pills}
+
+```{r}
+
+y_position = max(df_combined_noControls$A2GEditingIndex_Alu)
+
+c <- df_combined_noControls %>% 
+  mutate(AG = A2GEditingIndex_Alu) %>%
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  # filter(Gene_change == "ADAR1") %>%
+  compare_means(AG~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.05, y_position *1.12, y_position *1.09), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+# c <- c[c(1,3,2),] #reorder manually sorry
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns" #c$p.adj.format.stars
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars <- paste0(c$p.adj.format.stars," (p=",c$p.adj,")")
+c$p.adj.format.stars[grep("ns",c$p.adj.format.stars) ] <- "ns"
+
+df_c <- as.data.frame(c)
+
+
+plot <- df_combined_noControls %>%
+  # filter(Age_group == "Adult") %>%
+  ggplot( aes(y=A2GEditingIndex_Alu, x=time_point_arrenged))+
+  geom_point(aes(color = disease),alpha=0.4, size=2) + geom_line(aes(group=Patient), alpha=0.2)+
+  # facet_grid(  ~ "ADAR1" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Time point")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0.7) + scale_color_manual(values=c("blue", "red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none") +
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+out_path <- paste0(OUT_DIR,'/',"A2G_longTerm.pdf")
+ggsave(out_path, plot, width = 10, height = 6)
+
+plot
+
+```
+
+
+### Salmon {.tabset .tabset-pills}
+
+```{r}
+
+y_position = max(df_combined$ADAR)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  # filter(Gene_change == "ADAR1") %>%
+  compare_means(ADAR~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+
+
+df_c <- as.data.frame(c)
+
+adar1 <- df_combined %>%
+  ggplot( 
+               aes(y=ADAR, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ "ADAR1" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  adar1
+out_path <- paste0(OUT_DIR,'/',"SALMON_ADAR1_CovidComb.pdf")
+ggsave(out_path, adar1, width = 10, height = 6)
+
+```
+
+```{r echo=TRUE}
+y_position = max(df_combined$ADARB1)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  compare_means(ADARB1~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+df_c <- as.data.frame(c)
+
+
+adar2 <- 
+  df_combined %>%
+  ggplot( 
+               aes(y=ADARB1, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ "ADAR2" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  adar2
+out_path <- paste0(OUT_DIR,'/',"SALMON_ADAR2_CovidComb.pdf")
+ggsave(out_path, adar2, width = 10, height = 6)
+
+```
+
+
+```{r}
+
+y_position = max(df_combined$ADARB2)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  compare_means(ADARB2~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+df_c <- as.data.frame(c)
+
+
+adar3 <-
+  df_combined %>%
+  ggplot( 
+               aes(y=ADARB2, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_grid(  ~ "ADAR3" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Normalized Expression (TPM)")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  adar3
+out_path <- paste0(OUT_DIR,'/',"SALMON_ADAR3_CovidComb.pdf")
+ggsave(out_path, adar3, width = 10, height = 6)
+
+```
+
+```{r}
+plot_grid(adar1, adar2, adar3, labels = c('', '',''), label_size = 12, ncol=3)
+out_path <- paste0(OUT_DIR,'/',"SALMON_all_adars_CovidComb.pdf")
+ggsave(out_path, width = 18, height = 6)
+
+```
+
+### ISG {.tabset .tabset-pills}
+
+
+```{r}
+
+y_position = max(df_combined$ISG38_score)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  compare_means(ISG38_score~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+df_c <- as.data.frame(c)
+
+
+
+ISG38 <- 
+  df_combined %>%
+  ggplot( 
+               aes(y=ISG38_score, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid(  ~ "ISG38" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("Interferon signalling genes")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  ISG38
+out_path <- paste0(OUT_DIR,'/',"ISG38_CovidComb.pdf")
+ggsave(out_path, ISG38, width = 10, height = 6)
+
+```
+
+### Index - AluEditingIndex {.tabset .tabset-pills}
+
+```{r}
+
+ edit_type_names <- c("A2GEditingIndex_Alu" = "A-G (T-C)", "A2TEditingIndex_Alu" = "A-T (T-A)", 
+                      "C2AEditingIndex_Alu" = "C-A (G-T)", "C2TEditingIndex_Alu" = "C-T (G-A)", 
+                      "C2GEditingIndex_Alu" = "C-G (G-C)",  "A2CEditingIndex_Alu" = "A-C (T-G)")
+
+AG_clean <-df_combined %>%
+  dplyr::select("Run", "A2GEditingIndex_Alu","A2TEditingIndex_Alu",
+         "C2AEditingIndex_Alu","C2TEditingIndex_Alu","C2GEditingIndex_Alu","A2CEditingIndex_Alu") %>%
+  gather(edit_type, value, -Run) %>%
+ ggplot( 
+               aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  # theme(axis.text.x = element_text(angle = 90))+
+  ylab("ALU Editing Index")+ 
+  xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+AG_clean
+
+out_path <- paste0(OUT_DIR,'/',"AluEditing_cleanSignal.pdf")
+ggsave(out_path, AG_clean, width = 10, height = 6)
+```
+
+```{r}
+
+y_position = max(df_combined$A2GEditingIndex_Alu)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  compare_means(A2GEditingIndex_Alu~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+df_c <- as.data.frame(c)
+
+
+AluEditingIndex <- df_combined %>%
+  ggplot( 
+               aes(y=A2GEditingIndex_Alu, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid(  ~ "ADAR3" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  AluEditingIndex
+out_path <- paste0(OUT_DIR,'/',"AluEditing_AG.pdf")
+ggsave(out_path, AluEditingIndex, width = 10, height = 6)
+
+```
+
+### Index - 3'UTEditingIndex {.tabset .tabset-pills}
+
+```{r}
+edit_type_names <- c("A2GEditingIndex_3UTR" = "A-G (T-C)", "A2TEditingIndex_3UTR" = "A-T (T-A)", 
+                      "C2AEditingIndex_3UTR" = "C-A (G-T)", "C2TEditingIndex_3UTR" = "C-T (G-A)", 
+                      "C2GEditingIndex_3UTR" = "C-G (G-C)",  "A2CEditingIndex_3UTR" = "A-C (T-G)")
+
+AG_3UTR_clean <-df_combined %>%
+  dplyr::select("Run", "A2GEditingIndex_3UTR","A2TEditingIndex_3UTR",
+         "C2AEditingIndex_3UTR","C2TEditingIndex_3UTR","C2GEditingIndex_3UTR","A2CEditingIndex_3UTR") %>%
+  gather(edit_type, value, -Run) %>%
+ggplot( 
+               aes(y=value, x=edit_type ,fill=edit_type))+
+  geom_boxplot(aes(fill=edit_type)) +  
+  themes_ggplot+
+  ylab("3'UTR ALU Editing Index")+ 
+  xlab ("Nucleotide mismatch")+
+  scale_fill_discrete(name = "Mistmatch:")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position = "none") +
+  scale_fill_manual(values=c("yellow", "red", "blue", "green", "orange", "black"))+
+  scale_x_discrete(labels= edit_type_names)
+
+AG_3UTR_clean
+
+out_path <- paste0(OUT_DIR,'/',"3UTREditing_cleanSignal.pdf")
+ggsave(out_path, AG_3UTR_clean, width = 10, height = 6)
+```
+
+```{r}
+
+y_position = max(df_combined$A2GEditingIndex_3UTR)
+
+c <- df_combined_noControls %>% 
+  filter(time_point_arrenged %in% c("Control","Period:1","Period:5")) %>%
+  compare_means(A2GEditingIndex_3UTR~time_point_arrenged, data = .)
+c %<>% mutate(y_pos = c(y_position *1.5, y_position *1.05, y_position *1.25), labels = ifelse(p < 0.05, sprintf("%2.1e",p),p))
+
+c$p.adj.format <- c$p.adj
+c$p.adj.format[c$p.adj < 2e-16] <- "< 2e-16"
+c$p.adj.format[as.numeric(c$p.adj) > 0.1] <- "N.S"
+
+c$p.adj.format.stars <- c$p.adj
+c$p.adj.format.stars[c$p.adj >= 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.1] <- "ns"
+c$p.adj.format.stars[c$p.adj < 0.05] <- "*"
+c$p.adj.format.stars[c$p.adj < 0.01] <- "**"
+c$p.adj.format.stars[c$p.adj < 0.001] <- "***"
+c$p.adj.format.stars[c$p.adj < 2e-16] <- "****"
+
+c$p.adj.format.stars[c$p.adj < 0.05] <- paste0(c$p.adj.format.stars[c$p.adj < 0.05],"(p=", c$p.adj[c$p.adj < 0.05],")")
+df_c <- as.data.frame(c)
+
+
+
+UTR3EditingIndex <- df_combined%>%
+  # filter(Covid_Load != "Other Viruses") %>%
+  ggplot( 
+               aes(y=A2GEditingIndex_3UTR, x=time_point_arrenged))+
+  geom_boxplot(aes(fill=time_point_arrenged)) +  geom_jitter( size=2, alpha = 0.2)+
+  # facet_grid(  ~ "3'UTR Editing Index" ,  drop = TRUE, scales = "free", space = "free",)+
+  themes_ggplot+ ylab("3'UTR ALU Editing Index")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=chosen_colors)+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  geom_signif(data = df_c, 
+              aes(xmin=group1, xmax=group2, annotations=p.adj.format.stars, y_position=y_pos),manual = TRUE)
+
+  UTR3EditingIndex
+  
+  out_path <- paste0(OUT_DIR,'/',"3UTRAluEditing_AG.pdf")
+ggsave(out_path, UTR3EditingIndex, width = 10, height = 6)
+```
+
+### correlation {.tabset .tabset-pills}
+
+```{r}
+corr_alu_ADAR <- df_combined %>% 
+  ggplot(aes(y=A2GEditingIndex_Alu, x=ADAR))+
+  geom_point(aes(color=time_point_arrenged),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=chosen_colors, name = "Group:") +
+  ylab("ALU Editing Index")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_alu_ADAR
+
+out_path <- paste0(OUT_DIR,'/',"corr_Alu_ADAR.pdf")
+ggsave(out_path, corr_alu_ADAR, width = 10, height = 6)
+```
+
+```{r}
+corr_alu_ADAR_by_time <- df_combined %>% 
+  ggplot(aes(y=A2GEditingIndex_Alu, x=ADAR))+
+  geom_point(aes(color=time_point_arrenged),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+
+  facet_wrap(~time_point_arrenged)+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=chosen_colors, name = "Group:") +
+  ylab("ALU Editing Index")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_alu_ADAR_by_time
+
+out_path <- paste0(OUT_DIR,'/',"corr_Alu_ADAR_byTime.pdf")
+ggsave(out_path, corr_alu_ADAR_by_time, width = 10, height = 6)
+```
+
+```{r}
+corr_3UTR_ADAR <- df_combined %>% 
+ggplot(aes(y=A2GEditingIndex_3UTR, x=ADAR))+
+  geom_point(aes(color=time_point_arrenged),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=chosen_colors, name = "Group:") +
+  ylab("3'UTR ALU Editing Index")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_3UTR_ADAR
+
+out_path <- paste0(OUT_DIR,'/',"corr_3UTR_ADAR.pdf")
+ggsave(out_path, corr_3UTR_ADAR, width = 10, height = 6)
+```
+
+```{r}
+corr_ISG_ADAR <- df_combined %>% 
+ggplot(aes(y=ISG38_score, x=ADAR))+
+  geom_point(aes(color=time_point_arrenged),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='loess', se=F, colour ="black")+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=chosen_colors, name = "Group:") +
+  ylab("Interferon-Stimulated Genes Score")+ xlab ("ADAR1 Normalized Expression (TPM)")
+
+corr_ISG_ADAR
+
+out_path <- paste0(OUT_DIR,'/',"corr_ISG_ADAR.pdf")
+ggsave(out_path, corr_ISG_ADAR, width = 10, height = 6)
+```
+
+```{r}
+corr_ISG_UTR3 <- df_combined %>% 
+ggplot(aes(x=A2GEditingIndex_3UTR, y=ISG38_score))+
+  geom_point(aes(color=time_point_arrenged),size=3, alpha = 0.4) + themes_ggplot+ geom_smooth(method='lm', se=F, colour ="black")+# facet_grid(~Covid_Load)+
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + scale_color_manual(values=chosen_colors, name = "Group:") +
+  xlab("Interferon-Stimulated Genes Score")+ ylab ("3'UTR ALU Editing Index")
+
+corr_ISG_UTR3
+
+out_path <- paste0(OUT_DIR,'/',"corr_corr_ISG_UTR3.pdf")
+ggsave(out_path, corr_ISG_ADAR, width = 10, height = 6)
+
+```
+
