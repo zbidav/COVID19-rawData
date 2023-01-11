@@ -1,0 +1,891 @@
+---
+title: "Age-flies analysis"
+author: "David Gorelik"
+date: "13/11/2021"
+output: html_document
+# output:
+#   prettydoc::html_pretty:
+#     theme: cayman
+#     toc: true
+#     toc_depth: 3
+#     number_sections: true
+#     highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(reshape2)
+  library(dplyr)
+  library(data.table)
+library("data.table", lib.loc="/private/common/Software/R/Rlibs")
+library(magrittr)
+library(pheatmap)
+library( RColorBrewer)
+library( grid)
+library(stringr)
+# install.packages("matrixStats")
+library("matrixStats")
+
+# library(prettydoc)
+library(knitr)
+library(kableExtra) #for good designening of table
+library(magrittr)
+```
+# Results {.tabset .tabset-pills}
+
+## Setup {.tabset .tabset-pills}
+
+### functions {.tabset .tabset-pills}
+
+```{r functions}
+meanFunction <- function(x){
+  return(data.frame(y=round(mean(x),2),label=round(mean(x,na.rm=T),2)))}
+
+sampleName_find<-function(string,pattern = pattren_name) {
+  return (strsplit(string, pattren_name)[[1]][1])
+}
+
+read_file_in_folder <-function(folder, file_name=A2G_fileName, col_names = BED_colNames){
+  filePath = paste0(folder,'/',file_name)
+  return(read.delim(file = filePath, col.names = col_names))
+}
+
+save_pheatmap_pdf <- function(x, filename, width=12, height=8) {
+  stopifnot(!missing(x))
+  stopifnot(!missing(filename))
+  pdf(filename, width=width, height=height)
+  grid::grid.newpage()
+  grid::grid.draw(x$gtable)
+  dev.off()
+}
+
+draw_colnames_45 <- function (coln, gaps, ...) {
+  coord = pheatmap:::find_coordinates(length(coln), gaps)
+  x = coord$coord - 0.5 * coord$size
+  res = textGrob(coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"), vjust = 0.5, hjust = 1, rot = 45, gp = gpar(...))
+  return(res)
+}
+normalize <- function(x){return((x- min(x)) /(max(x)-min(x)))}
+normalize_ver2 <- function(x){return((x- min(na.omit(x))) /(max(x)-min(na.omit(x))))}
+```
+
+```{r}
+knwon_analysis_per_group <- function(filenames,group,min_edited,min_mismatches, flagCoverage =T)  {
+  #filenames <- filenames_second
+  #group <- groups_separated[2]
+  #min_edited <- args$min_edited2
+  
+  # filenames = list_files_group
+  # group =group
+  # min_edited = min_edited_samples
+  # min_mismatches = 10
+  # flagCoverage =T
+  all_csv <- lapply(filenames, function(x){
+
+    current_name <- sub("^([^.]*).*", "\\1", basename(as.character(x)))
+    names <-c("Region","Position","Reference","Strand",
+              paste(group,current_name,"Coverage.q25",sep="_"),
+              "MeanQ",
+              paste(group,current_name,"BaseCount.A.C.G.T.",sep="_"),"AllSubs","Frequency")
+    
+    dat <- read.csv(file=x,header=T,sep="\t", stringsAsFactors=F,col.names = names)[,c(1,2,5,7)]
+    if(nrow(dat)!=0){
+      dat$Region <- paste(dat$Region,dat$Position)
+      dat <- dat[,-c(2)]
+      #dat <-dat[dat[,2]>= min_coverage,]    #take only reads where coverage > 10
+      
+      if(flagCoverage){
+      dat <-dat[dat[,2]>= min_coverage,]
+      }
+      if(nrow(dat) == 0){return()}
+      dat[,3] <- do.call(rbind,lapply(dat[,3], FUN = function(y){
+        as.numeric(strsplit(y,split=",",fixed=T)[[1]][3])}))
+      
+      #take the site that surpass amount of mismatches
+      dat <- dat[dat[,3] >= min_mismatches,]
+      
+      #take number of edit sites devided by num_of_reads, which must be >10
+      #tmp_dat <-dat
+      dat[,3] <- dat[,3]/as.numeric(dat[,2])
+      dat[,-c(2)]
+    }
+  })
+  
+  all_csv_coverage <- lapply(filenames, function(x){
+    # print(x)
+    #group <- "control"
+    #min_edited <- 1  
+    #x<-filenames[1]
+    current_name <- sub("^([^.]*).*", "\\1", basename(as.character(x)))
+    names <-c("Region","Position","Reference","Strand",
+              paste(group,current_name,"Coverage.q25",sep="_"),
+              "MeanQ",
+              paste(group,current_name,"BaseCount.A.C.G.T.",sep="_"),"AllSubs","Frequency")
+    
+    dat <- read.csv(file=x,header=T,sep="\t", stringsAsFactors=F,col.names = names)[,c(1,2,5,7)]
+    if(nrow(dat)!=0){    
+      dat$Region <- paste(dat$Region,dat$Position)
+      dat <- dat[,-c(2)]
+      if(flagCoverage){
+        dat <-dat[dat[,2]>= min_coverage,]    #take only reads where coverage > 10
+      }
+      if(nrow(dat) == 0){return()}
+      
+      dat[,3] <- do.call(rbind,lapply(dat[,3], FUN = function(y){
+        as.numeric(strsplit(y,split=",",fixed=T)[[1]][3])}))
+      
+      #take the site that surpass amount of mismatches
+      dat <- dat[dat[,3] >= min_mismatches,]
+      if(nrow(dat) ==0) {print("check manually the filter minmismatch, no sites")}
+      
+      #take number of edit sites devided by num_of_reads, which must be >10
+      #tmp_dat <-dat
+      dat[,-c(3)]
+    }
+  })
+  
+  #add the amount of A
+  all_csv_A <- lapply(filenames, function(x){
+    #group <- "control"
+    #min_edited <- 1  
+    #x<-filenames[1]
+    current_name <- sub("^([^.]*).*", "\\1", basename(as.character(x)))
+    names <-c("Region","Position","Reference","Strand",
+              paste(group,current_name,"Coverage.q25",sep="_"),
+              "MeanQ",
+              paste(group,current_name,"BaseCount.A.C.G.T.",sep="_"),"AllSubs","Frequency")
+    
+    dat <- read.csv(file=x,header=T,sep="\t", stringsAsFactors=F,col.names = names)[,c(1,2,5,7)]
+    if(nrow(dat)!=0){    
+      dat$Region <- paste(dat$Region,dat$Position)
+      dat <- dat[,-c(2)]
+      
+      if(flagCoverage){
+        dat <-dat[dat[,2]>= min_coverage,]    #take only reads where coverage > 10
+      }
+      if(nrow(dat) == 0){return()}
+      
+      dat[,4] <- do.call(rbind,lapply(dat[,3], FUN = function(y){
+        as.numeric(strsplit(y,split=",",fixed=T)[[1]][3])}))
+      
+      dat[,3] <- do.call(rbind,
+                         lapply(dat[,3], FUN = function(y){
+        as.numeric(
+          strsplit(
+          strsplit(y,split=",",fixed=T)[[1]][1],
+          split="[",fixed=T)[[1]][2]
+          )
+        }))
+      
+      names(dat)[4] <- paste0(names(dat)[2],"G")
+      names(dat)[3] <- paste0(names(dat)[2],"A")
+      #take the site that surpass amount of mismatches
+      dat <- dat[dat[,4] >= min_mismatches,]
+      
+      
+      #take number of edit sites devided by num_of_reads, which must be >10
+      #tmp_dat <-dat
+      dat[,-c(2,4)]
+    }
+  })
+  
+  #add the amount of G
+  all_csv_G <- lapply(filenames, function(x){
+    #group <- "control"
+    #min_edited <- 1  
+    #x<-filenames[1]
+    current_name <- sub("^([^.]*).*", "\\1", basename(as.character(x)))
+    names <-c("Region","Position","Reference","Strand",
+              paste(group,current_name,"Coverage.q25",sep="_"),
+              "MeanQ",
+              paste(group,current_name,"BaseCount.A.C.G.T.",sep="_"),"AllSubs","Frequency")
+    
+    dat <- read.csv(file=x,header=T,sep="\t", stringsAsFactors=F,col.names = names)[,c(1,2,5,7)]
+    if(nrow(dat)!=0){    
+      dat$Region <- paste(dat$Region,dat$Position)
+      dat <- dat[,-c(2)]
+      
+      if(flagCoverage){
+        dat <-dat[dat[,2]>= min_coverage,]    #take only reads where coverage > 10
+      }
+      if(nrow(dat) == 0){return()}
+      
+      dat[,4] <- do.call(rbind,lapply(dat[,3], FUN = function(y){
+        as.numeric(strsplit(y,split=",",fixed=T)[[1]][3])}))
+      
+      dat[,3] <- do.call(rbind,
+                         lapply(dat[,3], FUN = function(y){
+                           as.numeric(
+                             strsplit(
+                               strsplit(y,split=",",fixed=T)[[1]][1],
+                               split="[",fixed=T)[[1]][2]
+                           )
+                         }))
+      
+      names(dat)[4] <- paste0(names(dat)[2],"G")
+      names(dat)[3] <- paste0(names(dat)[2],"A")
+      #take the site that surpass amount of mismatches
+      dat <- dat[dat[,4] >= min_mismatches,]
+      
+      #tmp_dat <-dat
+      dat[,-c(2,3)]
+    }
+  })
+  
+  # combine into a single dataframe
+  all_csv <- Reduce(function(dtf1, dtf2) merge(x = dtf1, y = dtf2, 
+                                               by.x = "Region", by.y ="Region" ,all=T),
+                    Filter(Negate(is.null), all_csv))
+
+  all_csv_coverage <- Reduce(function(dtf1, dtf2) merge(x = dtf1, y = dtf2, 
+                                                        by.x = "Region", by.y ="Region" ,all=T),
+                             Filter(Negate(is.null), all_csv_coverage) )
+  #Num A, G
+  all_csv_A <- Reduce(function(dtf1, dtf2) merge(x = dtf1, y = dtf2, 
+                                                        by.x = "Region", by.y ="Region" ,all=T),
+                             Filter(Negate(is.null), all_csv_A) )
+  
+  all_csv_G <- Reduce(function(dtf1, dtf2) merge(x = dtf1, y = dtf2, 
+                                                        by.x = "Region", by.y ="Region" ,all=T),
+                             Filter(Negate(is.null), all_csv_G) )
+  
+  #merge the two data frames
+  all_csv_combined <- left_join(all_csv,all_csv_coverage, by='Region')
+  all_csv_combined <- left_join(all_csv_combined,all_csv_A, by='Region')
+  all_csv_combined <- left_join(all_csv_combined,all_csv_G, by='Region')
+
+  all_csv_combined <- all_csv_combined[apply(all_csv_combined[,1:ncol(all_csv)], 1,
+                                             function(x) sum(is.na(x)))<=length(filenames)-min_edited,]
+  
+  #all_csv_tmp <- all_csv
+  
+  #get mean of the %editing
+  means<-paste("mean",group,sep="_")
+  medians<-paste("median",group,sep="_")
+  #all_csv[[means]] <- rowMeans(all_csv[,-c(1)],na.rm = T)
+  
+  lst_rowMeans <- rowMeans(all_csv_combined[,c(2:ncol(all_csv))],na.rm = T)
+  lst_rowMedians <- rowMedians(as.matrix(all_csv_combined[,c(2:ncol(all_csv))]), na.rm = T)
+  
+  all_csv_combined[[means]] <- lst_rowMeans
+  all_csv_combined[[medians]] <- lst_rowMedians
+  #Debug
+  #all_csv <- all_csv_tmp
+  
+  return(all_csv_combined)
+}
+```
+
+themes to use with ggplot2
+```{r}
+themes_ggplot <- theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  font("xlab", size = 12, color = "black", face = "bold") +
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("title", size = 14, color = "black", face = "bold")+
+  font("legendtitle", size = 12, color = "black", face = "bold")+
+  font("legendtext", size = 12, color = "black")+
+  font("xy.text", size = 12, color = "black")+
+  font("ylab", size = 12, color = "black", face = "bold") +
+  font("xlab", size = 12, color = "black", face = "bold") +
+  theme(strip.text.x = element_text( size = 12, color = "black", face = "bold"))+
+  theme(strip.text.y = element_text( size = 12, color = "black", face = "bold"))+
+  theme(legend.position='top')
+
+```
+
+### SRA {.tabset .tabset-pills}
+
+```{r}
+OUT_DIR <- "results/Cornell/known/"
+sra_table_path <- "raw/Cornell/SraRunTable.txt"
+dbgap_data_path <- "raw/Cornell/combined_sample_subject_attribute.csv"
+dir.create(OUT_DIR)
+
+#read and combine information table together
+dbgap_table <- read.csv(file= dbgap_data_path, stringsAsFactors=FALSE)
+sra_table_part <- read.csv(file= sra_table_path, stringsAsFactors=FALSE)
+sra_table <- left_join(dbgap_table,sra_table_part,by = c("BioSample.Accession"="BioSample"))
+
+#Create a new column of controls and COVID-19 patients, based on viral load values.
+sra_table$Covid_Load <- NA
+sra_table$Covid_Load[sra_table$VIRAL_LOAD == "None"] <- "Control" 
+sra_table$Covid_Load[sra_table$VIRAL_LOAD == "Low"] <- "COVID-19" 
+sra_table$Covid_Load[sra_table$VIRAL_LOAD == "Medium"] <- "COVID-19" 
+sra_table$Covid_Load[sra_table$VIRAL_LOAD == "High"] <- "COVID-19" 
+sra_table$Covid_Load[sra_table$VIRAL_LOAD == "OtherViralInfection"] <- "Other" 
+
+#take only required columns
+vector_sra_colmns <- c("RT_PCR","VIRAL_LOAD","Covid_Load")
+sra_table <- dplyr::select(sra_table,c("Run",vector_sra_colmns))
+
+#orgenize the values in each column
+sra_table$RT_PCR <- factor(sra_table$RT_PCR,levels = c("NotDetected","Detected"))
+sra_table$VIRAL_LOAD <- factor(sra_table$VIRAL_LOAD ,levels = c("None","Low", "Medium", "High", "OtherViralInfection"))
+sra_table$Covid_Load <- factor(sra_table$Covid_Load ,levels = c("Control","COVID-19", "Other"))
+
+
+#take only the required column
+sra_table$group <- sra_table$Covid_Load
+sra_table$group <- gsub('-','.',sra_table$group) # so there whould be no problems with '-' in COVID-19
+sra_table_known <- select(sra_table, "Run", "group" )
+
+#daclare the comparisons
+my_comparisons_all <- list(c("Control","COVID.19"), c("COVID.19","Other"), c("Control","Other") )
+
+```
+
+
+
+## Analysis {.tabset .tabset-pills}
+
+### Known raw {.tabset .tabset-pills}
+```{r}
+Known_dir_path <-"raw/Cornell/known/"
+min_edited_samples <- 10
+min_coverage <- 20 #minimal coverage of AG in this location
+min_mismatches <- 0 #minimal amount of mismatches
+
+flagCoverage =T #remove low edited samples
+
+```
+
+read all the files for the analsys
+```{r}
+all_files_path <- list.files(path=Known_dir_path, full.names=T, recursive=T, pattern = "\\.REDItoolKnown.out.tab$" )
+all_files_names <- unlist(lapply(all_files_path, function(x) strsplit(basename(x),'.',fixed = T)[[1]][1]))
+files_table <- data.frame(Run = all_files_names, 
+                             Path = all_files_path)
+```
+
+
+ now let's combine the tables
+```{r}
+files_table <- files_table[files_table$Run %in% sra_table_known$Run,]
+df_files <- left_join(files_table, sra_table_known, by="Run")
+
+#remove the Other viruses group to focus only on COVID-19
+df_files <- df_files[df_files$group != "Other",]
+``` 
+
+Script that read all the files from the same group to one table. 
+```{r}
+list_df_analysis <- list()
+df_sra_keys <- sra_table[c("Run")]
+df_files_group <- df_files
+df_files_group <- left_join(df_files_group,df_sra_keys)
+
+for(group in unique(df_files$group)){
+  print(group)
+  list_files_group <- na.omit(df_files$Path[df_files$group == group])
+
+  analysis <- knwon_analysis_per_group(filenames = list_files_group,
+                                       group =group,
+                                       min_edited = min_edited_samples,
+                                       min_mismatches = min_mismatches,
+                                       flagCoverage = flagCoverage)
+  
+  df_files_group <- df_files[df_files$group == group,]
+
+  list_df_analysis[[length(list_df_analysis)+1]] <- analysis
+}
+
+```
+ ### Known combination {.tabset .tabset-pills}
+
+ Now... let's read other parameters.
+ 
+```{r}
+GabaiSites_sites_list <- "raw/Cornell/allTissues_filtered_newBlat_61_94_newClust_clust_100_wTissueNumber_wSums_summary_editLvl0.01inOneTissue_allFields_NoWxsLvl0.001_tissues_maxEditLvl_Min100reads_noRRnaRep.txt"
+GabaiSites_sites_base <- "raw/Cornell/Orshay_AllSites_list.bed"
+
+df_GabaiSites <- read.csv(GabaiSites_sites_list,sep="\t",header = F)
+important_cols <- c("Chr","Start","End","Alt","expression","Strand",  "gene","Data","annot")
+colnames(df_GabaiSites)[seq(length(important_cols))] <- important_cols
+df_GabaiSites$Region <- paste0(df_GabaiSites$Chr," ",df_GabaiSites$End)
+df_GabaiSites_short <- df_GabaiSites[,-c(grep("V",colnames(df_GabaiSites)))]
+df_GabaiSites_short$Data <- gsub(",","_",df_GabaiSites_short$Data)
+df_GabaiSites_short$expression <- gsub(",","_",df_GabaiSites_short$expression)
+
+
+df_GabaiSites_sites_base <- read.csv(GabaiSites_sites_base, sep = "\t", col.names = c("chr","pos","starnd","base","gene"))
+GabaiSites_AG_base <- df_GabaiSites_sites_base %>% filter(base == "AG") %>% mutate(label = paste(.$chr, .$pos)) %>% .$label
+```
+ 
+ Let's print all the groups combinations
+```{r}
+groups <-  unique(df_files$group)
+for(i in seq(1,length(groups), by=1)){
+  if (i == length(groups)) break
+  for(j in seq(i + 1,length(groups), by=1)){
+    #print(paste(i,j))
+    group_name <- paste(groups[i],groups[j],sep=':')
+    print(group_name)
+  }
+} 
+```
+ Now let's declare the parameters
+```{r}
+allowed_comparisons <- c(#"COVID.19:Other", 
+                         "Control:COVID.19"
+                         #"Other:Control"
+                         )
+
+minimal_editing_one_group <- 0.05
+minimal_editing_all <- 0.05
+cov_value <- 0.2
+statistical_exam <- "wilcox.test"
+corr_method <- "pearson"
+
+flag_checking_if_one_table_empty <- T
+flag_checking_allowed_comparisons <- T
+flag_checking_exclude_than_0_in_both_means <- T
+
+ 
+```
+ 
+Now we have all the tables in one list. but we do want to analyse every 2 tables together: we use tringle upper matrice to cover all groups.
+
+```{r warning=FALSE}
+df_combined_sites <- data.frame(Region=character(0))
+groups <-  unique(df_files$group)
+comparison <- 0
+
+for(i in seq(1,length(list_df_analysis), by=1)){
+  if (i == length(list_df_analysis)){break} 
+   for(j in seq(i + 1,length(groups), by=1)){
+    #print(paste(i,j))
+    group_name <- paste(groups[i],groups[j],sep=':')
+
+
+    #perform check if dataset is empty
+    if (flag_checking_if_one_table_empty){
+      if (nrow(list_df_analysis[[i]]) ==0 | nrow(list_df_analysis[[j]]) ==0 ){
+        print(paste("BEAWRE", group_name,"resulted with no rows"))
+        next
+    }}
+    
+    if (flag_checking_allowed_comparisons){
+      if (! group_name  %in% allowed_comparisons) {next}
+    }
+    
+    #merge group, and get difference in mean
+    df_merged <- merge(list_df_analysis[[i]],list_df_analysis[[j]], by="Region",all=F)
+    
+    #filter only AG sites
+    df_merged <- df_merged %>% filter(df_merged$Region %in% GabaiSites_AG_base)
+    
+    #get only rows that didnt heave 0 in both means
+    if(flag_checking_exclude_than_0_in_both_means){
+      df_merged <- df_merged[apply(df_merged[,grep("^mean", colnames(df_merged))], 1,
+                                       function(x) {!(as.numeric(x[1])==0 & as.numeric(x[2])==0)}),]
+    }
+    
+    #difference between means
+    df_merged$diff_mean_second_first <- apply(df_merged[,grep("^mean", colnames(df_merged))],
+                                                 1,
+                                                 function(x) {
+                                                   round(
+                                                     #abs(
+                                                       as.numeric(x[1])-as.numeric(x[2]),
+                                                       #),
+                                                     digits = 3)
+                                                   })
+    
+    result_one_sample_t.test <- t.test(df_merged$diff_mean_second_first)
+    print(paste("All sitesGroup:",group_name,"Number of sites:",
+                length(df_merged$diff_mean_second_first),
+                result_one_sample_t.test[[3]]))
+    
+    #get p-value and FDR
+    #colnames(df_merged[,column_first])
+    
+    #select the coulmns
+    # column_first<- grep(paste0("^",as.character(groups[i]),'_'), colnames(df_merged)) 
+    # column_second<- grep(paste0("^",as.character(groups[j]),'_'), colnames(df_merged))
+    # #exclude coverage coulmns
+    # column_first <- column_first[-which(column_first %in% grep('Coverage', colnames(df_merged)))]
+    # column_second <- column_second[-which(column_second %in% grep('Coverage', colnames(df_merged)))]
+    # 
+    
+    regex_1 <- paste0("^",as.character(gsub(" ",".",groups[i])),"_[A-Z,0-9]*_BaseCount.A.C.G.T.")
+    # regex_2 <- paste0("^",as.character(gsub(" ",".",gsub("\\.","-",groups[j]))),"_[A-Z,0-9]*_BaseCount.A.C.G.T.")
+    regex_2 <- paste0("^",as.character(gsub(" ",".", groups[j])),"_[A-Z,0-9]*_BaseCount.A.C.G.T.")
+
+    column_first <- grep(regex_1, colnames(df_merged)) 
+    column_second <- grep(regex_2, colnames(df_merged))
+    
+    
+    df_merged$sum_edited_samples <- apply(df_merged[,c(column_second,column_first)], 
+                                          1, 
+                                          function(x) length(column_second)+length(column_first)-sum(is.na(x)))
+    
+
+    #first of all: retain only the samples that sourpuss the amount of edited samples
+    df_merged <- df_merged[apply(df_merged[c(column_first)],1, function(x) { 
+      length(x) - sum(is.na(x)) >= min_edited_samples }),] 
+    df_merged <- df_merged[apply(df_merged[c(column_second)],1, function(x) { 
+      length(x) - sum(is.na(x)) >= min_edited_samples }),]
+    
+    if(nrow(df_merged) ==0) {
+      print(paste("BEAWRE", group_name,"resulted with no rows after filtering. consider lower the filters"))
+      next
+      }
+
+    if(nrow(df_merged)>1){
+    result_one_sample_t.test <- t.test(df_merged$diff_mean_second_first)
+    print(paste("Servived sitesGroup:",group_name,"Number of sites:",
+                length(df_merged$diff_mean_second_first),result_one_sample_t.test[[3]]))
+    }
+    
+    if(statistical_exam == "t.test") {
+    df_merged$p_val <- apply(df_merged,1, function(x) { 
+      tryCatch(  expr = {
+            as.numeric(unlist(
+              t.test(as.numeric(x[c(column_first)]),
+                     as.numeric(x[c(column_second)]),
+              )[[3]]))
+            }, 
+            error = function(e){NA
+              #DEBUG print(paste0("Error when comparing: ",i,", ", j, "-", 
+              # group_name,". t.test on: (1).",x[c(column_first)],". (2).",x[c(column_second)],"."))
+              }, warning = function(w){}, finally = {}) })
+    }else if(statistical_exam == "wilcox.test") {
+      df_merged$p_val <- apply(df_merged,1, function(x) { 
+      tryCatch(  expr = {
+            as.numeric(unlist(
+              wilcox.test(as.numeric(x[c(column_first)]),
+                     as.numeric(x[c(column_second)]),
+              )[[3]]))
+            }, 
+            error = function(e){NA
+              #DEBUG print(paste0("Error when comparing: ",i,", ", j, "-", 
+              # group_name,". t.test on: (1).",x[c(column_first)],". (2).",x[c(column_second)],"."))
+              }, warning = function(w){}, finally = {}) })
+    }
+  
+     
+    df_merged$pearson <- apply(df_merged,1, function(x) { 
+      tryCatch(  expr = {
+        as.numeric(unlist(
+          cor(as.numeric(x[c(column_first)]),as.numeric(x[c(column_second)]), method = corr_method)
+          [[1]]))
+      }, error = function(e){NA
+        # print(paste0("Error when comparing: ",i,", ", j, "-", 
+        # group_name,". t.test on: (1).",x[c(column_first)],". (2).",x[c(column_second)],"."))
+      }, warning = function(w){}, finally = {})  })
+    
+
+    df_merged$p_val <- NA
+      for (row in seq(1,nrow(df_merged))) {
+        #df_merged[row,"p_val"] <- as.numeric(unlist(df_merged[row,"p_val"]))
+        x <- df_merged[row,]
+        df_merged$p_val[row] <- wilcox.test(
+          as.numeric(na.omit(as.numeric(x[c(column_first)]))),
+          as.numeric(na.omit(as.numeric(x[c(column_second)])))
+                     )[[3]]
+      }
+    #FDR 
+    df_merged$FDR_full <- p.adjust(df_merged$p_val,method="fdr")
+    
+    #okay.... let's change the names
+    names(df_merged)[names(df_merged)=="diff_mean_second_first"] <- paste('diff',group_name,sep = ':')
+    names(df_merged)[names(df_merged)=="sum_edited_samples"] <- paste('sum_edited',group_name,sep = ':')
+    names(df_merged)[names(df_merged)=="p_val"] <- paste('p_val',group_name,sep = ':')
+    names(df_merged)[names(df_merged)=="pearson"] <- paste('pearson',group_name,sep = ':')
+    names(df_merged)[names(df_merged)=="FDR_full"] <- paste('FDR_full',group_name,sep = ':')
+
+    #Now let's merge
+    df_combined_sites <- full_join(df_combined_sites,df_merged,)
+    comparison <- comparison +1
+    print(paste("comparison",comparison,"Finished",group_name))
+  }
+}
+
+
+```
+
+ And write the table
+```{r}
+out_path <- paste0(OUT_DIR,'/',"knownComb_editingSites_allComparison.csv")
+write.csv(df_combined_sites, out_path, row.names = F, quote = F)
+```
+
+Let's combine sites with Sapiro list.
+```{r}
+df_all_known_sites_samples <- df_combined_sites
+df_all_known_sites_samples_GabaiSites <- left_join(df_all_known_sites_samples,df_GabaiSites_short,by = 'Region')
+
+out_path <- paste0(OUT_DIR,'/',"knownComb_editingSites_allComparison_GabaiSites.csv")
+write.csv(df_all_known_sites_samples_GabaiSites, out_path, row.names = F, quote = F)
+```
+
+
+### Known volcano-plot {.tabset .tabset-pills}
+
+```{r}
+df_all_known_sites_samples_GabaiSites %>%  
+ ggplot(aes(x = round(100 * (mean_COVID.19  - mean_Control),2), 
+             y = -log10(`FDR_full:Control:COVID.19`),
+             color = ifelse(abs(mean_COVID.19  - mean_Control ) >= 0.05 & 
+                             `FDR_full:Control:COVID.19` <= 0.05, "red", 
+                            ifelse(`FDR_full:Control:COVID.19` <= 0.05, "orenge","Black")),
+            label = gene
+       )) +
+  geom_point(alpha=0.5, size =3) +
+  scale_color_manual(values = c('black',"orange", "red"), 
+                     labels =c(paste0('not','\n','significant'), 
+                                paste0("diffrence < 5%", "\n","p.value <  0.05"),
+                               paste0("diffrence > 5%", "\n","p.value < 0.05")),
+                     name = element_blank()) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  geom_vline(xintercept = c(0),col = "gray",linetype = "dotted",size = 1)+
+  geom_hline(yintercept = c(-log10(0.05),-log10(0.05)),col = "gray",linetype = "dotted",size = 1)+
+  # geom_hline(yintercept = c(-log10(10e-6),-log10(10e-6)),col = "gray",linetype = "dotted",size = 1)+
+  
+  
+  xlab ("Difference in A-to-G editing means (%)")+
+  ylab(expression("P value (-log"[10]*")")) +
+
+  font("xlab", size = 12, color = "black",) +
+  font("ylab", size = 12, color = "black", ) +
+  # font("legendtitle", size = 12, color = "black", face = "bold")+
+  font("legendtext", size = 12, color = "black")+
+  font("xy.text", size = 12, color = "black")+
+  theme(legend.position='top',  legend.justification='left') +
+  
+  geom_text_repel(data=df_all_known_sites_samples_GabaiSites %>% filter(`FDR_full:Control:COVID.19` <= 0.05)
+                  ,
+                size = 3, color="black"
+                ) -> plot_p
+    plot_p
+    path_save <- paste0(OUT_DIR,'volcanoPlot_covid19_control_fdr.pdf')
+    ggsave(filename = path_save,plot = plot_p,width = 12, height = 10)
+```
+
+
+### Known final results {.tabset .tabset-pills}
+
+```{r}
+minimal_diff <- 0.01
+max_p.val <- 0.05
+max_FDR <- 0.1
+
+FLAG_check_diff <- F
+FLAG_check_p.val <- F
+FLAG_check_FDR <- T
+FLAG_check_FDR_fisher <- F
+
+desired_tests <- allowed_comparisons
+```
+
+
+And now to create vectors out of the values. 
+
+For the diffrence:
+```{r}
+# if(FLAG_check_diff){
+vector_bool_diff <- c(rep(FALSE, nrow(df_all_known_sites_samples_GabaiSites))) #
+for (diffrence in grep('diff', colnames(df_all_known_sites_samples_GabaiSites))){
+  temp_vec <- paste0('diff:',desired_tests)
+  if (colnames(df_all_known_sites_samples_GabaiSites)[diffrence] %in% temp_vec == F){next}
+  
+  vector_bool_diff <- vector_bool_diff | (abs(df_all_known_sites_samples_GabaiSites[,diffrence]) >= minimal_diff)
+  
+}
+
+vector_bool_diff[is.na(vector_bool_diff)] <- FALSE
+sum(vector_bool_diff [vector_bool_diff== TRUE])
+# }
+
+```
+For the p.val:
+
+```{r}
+# if(FLAG_check_p.val){
+vector_bool_pval <- c(rep(FALSE, nrow(df_all_known_sites_samples_GabaiSites))) #
+for (p_val in grep('p_val:', colnames(df_all_known_sites_samples_GabaiSites))){
+  temp_vec <- paste0('p_val:',desired_tests)
+  if (colnames(df_all_known_sites_samples_GabaiSites)[p_val] %in% temp_vec == F){next}
+  
+  vector_bool_pval <- vector_bool_pval | (df_all_known_sites_samples_GabaiSites
+                                          [,p_val]<= max_p.val)
+}
+vector_bool_pval[is.na(vector_bool_pval)] <- FALSE
+sum(vector_bool_pval [vector_bool_pval== TRUE])
+# }
+
+```
+for the FDR:
+
+```{r}
+# if(FLAG_check_FDR){
+vector_bool_fdr <- c(rep(FALSE, nrow(df_all_known_sites_samples_GabaiSites))) #
+for (p_val in grep('FDR_full:', colnames(df_all_known_sites_samples_GabaiSites))){
+  temp_vec <- paste0('FDR_full:',desired_tests)
+  if (colnames(df_all_known_sites_samples_GabaiSites)[p_val] %in% temp_vec == F){next}
+  vector_bool_fdr <- vector_bool_fdr | (df_all_known_sites_samples_GabaiSites[,p_val]<= max_FDR)
+}
+vector_bool_fdr[is.na(vector_bool_fdr)] <- FALSE
+sum(vector_bool_fdr [vector_bool_fdr== TRUE])
+# }
+
+```
+
+And now to the fun part: combinations!
+
+```{r}
+vector_bool <- c(rep(TRUE, nrow(df_all_known_sites_samples_GabaiSites))) 
+
+if(FLAG_check_diff){vector_bool <- vector_bool & vector_bool_diff}
+if(FLAG_check_p.val){vector_bool <- vector_bool & vector_bool_pval}
+if(FLAG_check_FDR){vector_bool <- vector_bool & vector_bool_fdr}
+
+sum(vector_bool)  
+
+```
+Now let's write the table 
+
+```{r}
+df_selected_known_sites_samples_GabaiSites <- df_all_known_sites_samples_GabaiSites[vector_bool,]
+
+out_path <- paste0(OUT_DIR,'/',"knownComb_editingSites_allComparison_filtered.csv")
+write.csv(df_selected_known_sites_samples_GabaiSites, out_path, row.names = F, quote = F)
+```
+
+
+Now let's buld the final table
+```{r}
+df_summery_table <- df_selected_known_sites_samples_GabaiSites
+lst_colnames <- colnames(df_selected_known_sites_samples_GabaiSites)
+
+col_region <- lst_colnames[grep("Region",lst_colnames)]
+col_gene <- lst_colnames[grep("gene",lst_colnames)]
+# col_annot <- lst_colnames[grep("annot2",lst_colnames)]
+col_annot <- lst_colnames[grep("annot",lst_colnames)]
+col_strand <- lst_colnames[grep("Strand",lst_colnames)] #GabaiSites
+col_Alt <- lst_colnames[grep("Alt",lst_colnames)] #GabaiSites
+col_Data <- lst_colnames[grep("Data",lst_colnames)] #GabaiSites
+
+col_mean <- lst_colnames[grep("mean",lst_colnames)]
+col_median <- lst_colnames[grep("median",lst_colnames)]
+
+col_diff <- lst_colnames[grep("diff",lst_colnames)]
+col_p_val <- lst_colnames[grep("p_val",lst_colnames)]
+col_fdr <- lst_colnames[grep("FDR_full",lst_colnames)]
+col_pearson <- lst_colnames[grep("pearson",lst_colnames)]
+col_GabaiSites <-
+df_summery_table <- df_selected_known_sites_samples_GabaiSites[c(col_region, col_gene, col_annot,col_strand,col_Alt, 
+                                                             col_median,col_mean,col_diff,
+                                                             col_pearson,col_p_val,col_fdr, col_Data)]
+
+
+df_summery_table[c(col_median,col_mean,col_diff)] <- round(df_summery_table[c(col_median,col_mean,col_diff)], digit=3)
+df_summery_table[c(col_p_val,col_fdr)] <- signif(df_summery_table[c(col_p_val,col_fdr)], digits=2)
+
+ncol(df_summery_table)
+
+# allowed_comparisons <- c("female_3:male_3","male_3:male_15","male_3:male_30","male_3:male_45",
+                         # "male_15:male_30","male_15:male_45","male_30:male_45")
+
+#prepare the table
+df_gather_summery <- df_summery_table[c(col_region, col_gene, col_annot,col_strand,col_Alt, col_Data,col_median, col_mean,col_diff)]
+df_gather_summery <- gather(df_gather_summery,"Comparison","Diffrence",
+                            -c(col_region, col_gene, col_annot,col_strand,col_Alt, col_Data,col_median, col_mean))
+df_gather_summery$Comparison <- gsub("diff:",'',df_gather_summery$Comparison)
+
+df_pearson <- df_summery_table[c(col_region, col_pearson)]
+df_pearson <- gather(df_pearson,"Comparison","Pearson",-c(col_region))
+df_pearson$Comparison <- gsub("pearson:",'',df_pearson$Comparison)
+
+df_pval <- df_summery_table[c(col_region, col_p_val)]
+df_pval <- gather(df_pval,"Comparison","p_val",-c(col_region))
+df_pval$Comparison <- gsub("p_val:",'',df_pval$Comparison)
+
+df_fdr <- df_summery_table[c(col_region, col_fdr)]
+df_fdr <- gather(df_fdr,"Comparison","fdr",-c(col_region))
+df_fdr$Comparison <- gsub("FDR_full:",'',df_fdr$Comparison)
+
+df_comb_summery <- left_join(df_gather_summery,df_pearson, by=c("Region", "Comparison"))
+df_comb_summery <- left_join(df_comb_summery,df_pval, by=c("Region", "Comparison"))
+df_comb_summery <- left_join(df_comb_summery,df_fdr, by=c("Region", "Comparison"))
+
+df_comb_summery <- df_comb_summery %>% select(c(colnames(df_comb_summery)[!colnames(df_comb_summery) %in% c("expression","Data")],c("Data")))
+
+#Now let's do the same statistics
+
+df_comb_summery <-df_comb_summery[df_comb_summery$fdr <= max_FDR,]
+
+
+
+df_comb_summery <- df_comb_summery[!row.names(df_comb_summery) %in% 
+                                     row.names(df_comb_summery)[grep("^NA",row.names(df_comb_summery))],]
+
+
+
+
+out_path <- paste0(OUT_DIR,'/',"knownComb_editingSites_selectedSites_meansTable.csv")
+write.csv(df_comb_summery, out_path, row.names = F, quote = F)
+
+
+kable(df_comb_summery) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", 'condensed')) 
+``` 
+
+All sites
+```{r echo=TRUE}
+df_selected_known_sites_samples_GabaiSites %>%
+  # filter(abs(`diff:Control:COVID.19`) >=0.05 ) %>%
+  select("Chr","End", "annot", "gene",
+         grep("_[A-Z,0-9]*_BaseCount.A.C.G.T.",names(.))) %>%
+  gather("Sample","Editing", -c("Chr","End", "annot", "gene")) %>%
+  mutate(Sample = gsub("_BaseCount.A.C.G.T.","",Sample)) %>%
+  separate(Sample,into = c("Group","Run"),sep ="_") %>%
+  mutate(label = paste0(Chr,":",End," - ",gene)) %>%
+  ggplot( 
+               aes(y=Editing, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_wrap(  .~label )+
+  themes_ggplot+ ylab("A-G Editing levels")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue", "red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Control", "COVID.19")), 
+                     label = "p.signif", 
+                     label.y = 0.5
+                     ) -> plot
+plot
+out_path <- paste0(OUT_DIR,'/',"known_selectedSites.pdf")
+ggsave(out_path, plot, width = 16, height = 10)
+
+```
+
+strong sites
+```{r}
+df_selected_known_sites_samples_GabaiSites %>%
+  filter(abs(`diff:Control:COVID.19`) >=0.05 ) %>%
+  select("Chr","End", "annot", "gene",
+         grep("_[A-Z,0-9]*_BaseCount.A.C.G.T.",names(.))) %>%
+  gather("Sample","Editing", -c("Chr","End", "annot", "gene")) %>%
+  mutate(Sample = gsub("_BaseCount.A.C.G.T.","",Sample)) %>%
+  separate(Sample,into = c("Group","Run"),sep ="_") %>%
+  mutate(label = paste0(Chr,":",End," - ",gene)) %>%
+  ggplot( 
+               aes(y=Editing, x=Group))+
+  geom_boxplot(aes(fill=Group)) +  geom_jitter( size=2, alpha = 0.2)+
+  facet_wrap(  .~label )+
+  themes_ggplot+ ylab("A-G Editing levels")+ xlab ("Group")+ scale_fill_discrete(name = "Group:")+
+  expand_limits(y = 0) + scale_fill_manual(values=c("blue", "red"))+
+  theme(axis.title.x = element_blank())+ theme(legend.position = "none")+
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Control", "COVID.19")), 
+                     label = "p.signif", 
+                     ) -> plot
+plot
+out_path <- paste0(OUT_DIR,'/',"known_selectedSites_strong.pdf")
+ggsave(out_path, plot, width = 10, height = 6)
+```
